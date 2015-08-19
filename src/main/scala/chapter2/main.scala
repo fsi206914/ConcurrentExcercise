@@ -76,62 +76,152 @@ object Excerses203 extends App{
   }
 }
 
-object Excerses204Answer extends App{
 
-  // 4
-  class SyncVar2[T] {
-    private var state: Option[T] = None
-    def get(): T = state.synchronized {
-      state match {
-        case None => throw new IllegalArgumentException()
-        case Some(x) =>
-          val tmp: T = x
-          state = None // if state.notify() was called afterwards, an IllegalMonitorStateExc would be thrown as the current thread does not own the object monitor anymore; it was lost on assigning None to state
-          tmp
-      }
+object Excerses205 extends App{
+
+  class SyncVar[T] {
+    var elem: T = null.asInstanceOf[T]
+
+    def getWait(): T = this.synchronized{
+      while(isEmpty == true) this.wait();
+      val ret = elem
+      elem = null.asInstanceOf[T]
+      this.notify()
+      ret
     }
-    def put(el: T): Unit = state.synchronized {
-      state match {
-        case None => state = Some(el)
-        case Some(x) => throw new IllegalArgumentException()
-      }
+
+    def putWait(x: T): Unit = this.synchronized{
+      while(isEmpty == false) this.wait();
+      elem = x
+      this.notify()
     }
-    def isEmpty: Boolean = state.synchronized {
-      state match {
-        case None => true
-        case _ => false
-      }
+
+    def isEmpty: Boolean = this.synchronized{
+      if(elem == null) return true;
+      else return false;
     }
-    def nonEmpty: Boolean = !isEmpty
   }
 
-   val sv2 = new SyncVar2[Int]
-   val tprod = MyThread.thread {
-      sv2.synchronized{
-        for(i <- 0 until 15){
-        println("before producer")
-        while(sv2.nonEmpty)sv2.wait()
-        sv2.put(i)
-        println("during producer")
-        sv2.notify()
-        println("after producer")
+  val elem = new SyncVar[Int]
+  MyThread.thread{
+    for(i <- 0 until 15){
+      elem.putWait(i)
+    }
+  }
+  MyThread.thread{
+    while(true){
+      println("elem=" + elem.getWait())
+    }
+  }
+}
+
+object Excerses206 extends App{
+
+  class SyncQueue[T](num: Int) {
+    val queue: scala.collection.mutable.Queue[T] = new scala.collection.mutable.Queue()
+
+    def getWait(): T = this.synchronized{
+      while(isEmpty == true) this.wait();
+      this.notify()
+      queue.dequeue()
+    }
+
+    def putWait(x: T): Unit = this.synchronized{
+      while(isFull == true) this.wait();
+      queue += x;
+      this.notify()
+    }
+
+    def isEmpty: Boolean = this.synchronized{
+      if(queue.size == 0) return true;
+      else return false;
+    }
+    def isFull: Boolean = this.synchronized{
+      if(queue.size == num) return true;
+      else return false;
+    }
+  }
+
+  val elem = new SyncQueue[Int](5)
+  MyThread.thread{
+    for(i <- 0 until 15){
+      elem.putWait(i)
+    }
+  }
+  MyThread.thread{
+    while(true){
+      println("elem=" + elem.getWait())
+    }
+  }
+}
+
+object Excerses207 extends App {
+  class Account(val name: String, var money: Int)
+
+  def send(a: Account, b: Account, n: Int) = a.synchronized {
+    b.synchronized {
+      a.money -= n
+      b.money += n
+    }
+  }
+
+  def sendAll(accounts: Set[Account], target: Account): Unit = {
+    for(acc<-accounts){
+      acc.synchronized{
+        target.synchronized{
+          target.money += acc.money;
+          acc.money = 0;
+        }
       }
     }
-   }
-   val tcons = MyThread.thread {
+  }
+}
 
-     def go(): Unit = {
-       var get: Int = 0
-       sv2.synchronized {
-         while (sv2.isEmpty) sv2.wait()
-         get = sv2.get()
-         sv2.notify()
-       }
-       println(get)
-       if (get < 14) go()
-     }
-     go()
-   }
+object Excerses208 extends App {
+
+  import scala.math.Ordering
+  import collection.mutable.PriorityQueue;
+
+  class PriorityTaskPool(p:Int, important:Int) {
+    val pq: PriorityQueue[(Int, () => Unit)] = new PriorityQueue()(Ordering.by(t2 => -t2._1))
+    @volatile var terminated = false
+    val workers = for(_ <- 0 until p) yield new java.lang.Thread {
+      def poll() = pq.synchronized {
+        while(pq.isEmpty && !terminated) pq.wait()
+        println(this.getName)
+        pq.headOption match {
+          case Some(task) if !terminated || task._1 < important => Some(pq.dequeue())
+          case _ => None
+        }
+      }
+
+      override def run() = poll() match {
+        case Some(task) => task._2(); run()
+        case None => println("exit")
+      }
+    }
+    def go(): Unit = workers.foreach(_.start())
+    def asynchronous(priority:Int)(task: => Unit): Unit = pq.synchronized {
+      pq.enqueue(priority -> (() => task))
+      pq.notify()
+    }
+    def shutdown(): Unit = {
+      terminated = true
+      pq.synchronized { pq.notify() }
+    }
+  }
+
+  val ptp = new PriorityTaskPool(2,2)
+  ptp.asynchronous(3)(println(3))
+  ptp.asynchronous(2)(println(2))
+  ptp.asynchronous(1)(println(1))
+  ptp.asynchronous(1)(println(1))
+  ptp.asynchronous(2)(println(2))
+  ptp.asynchronous(3)(println(3))
+  ptp.asynchronous(-1)(println(-1))
+  ptp.go()
+  ptp.shutdown()
+
 }
 
 
